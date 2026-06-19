@@ -702,6 +702,7 @@ struct SDL_GPUDevice
 
     Uint32 (*GetBindlessIndex)(
         SDL_GPURenderer *driverData,
+        SDL_GPUCommandBuffer *commandBuffer,
         SDL_GPUTexture *texture,
         SDL_GPUSampler *sampler);
 

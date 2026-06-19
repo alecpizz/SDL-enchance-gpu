@@ -5657,6 +5657,7 @@ static void VULKAN_DrawIndexedPrimitivesIndirect(
 
 static Uint32 VULKAN_GetBindlessIndex(
     SDL_GPURenderer *driverData,
+    SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUTexture* texture,
     SDL_GPUSampler* sampler)
 {
@@ -5664,6 +5665,7 @@ static Uint32 VULKAN_GetBindlessIndex(
     VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)texture;
     VulkanTexture *vulkanTexture = textureContainer->activeTexture;
     VulkanSampler *vulkanSampler = (VulkanSampler *)sampler;
+    VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer*)commandBuffer;
 
     if (!renderer->bindlessSupported) {
         SDL_SetError("Bindless textures are not supported on this device");
@@ -5696,6 +5698,13 @@ static Uint32 VULKAN_GetBindlessIndex(
     writeDescriptorSet.pImageInfo = &imageInfo;
     writeDescriptorSet.pBufferInfo = NULL;
     writeDescriptorSet.pTexelBufferView = NULL;
+
+
+    VULKAN_INTERNAL_TextureTransitionFromDefaultUsage(
+        renderer,
+        vulkanCommandBuffer,
+        VULKAN_TEXTURE_USAGE_MODE_SAMPLER,
+        vulkanTexture);
 
     renderer->vkUpdateDescriptorSets(
         renderer->logicalDevice,

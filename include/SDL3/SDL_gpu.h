@@ -4292,6 +4292,7 @@ extern SDL_DECLSPEC bool SDLCALL SDL_AcquireGPUSwapchainTexture(
 
 extern SDL_DECLSPEC Uint32 SDLCALL SDL_GetGPUBindlessIndex(
     SDL_GPUDevice *device,
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUTexture *texture,
     SDL_GPUSampler *sampler);
 

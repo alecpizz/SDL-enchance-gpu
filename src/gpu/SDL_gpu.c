@@ -3359,11 +3359,11 @@ bool SDL_AcquireGPUSwapchainTexture(
     return result;
 }
 
-Uint32 SDL_GetGPUBindlessIndex(SDL_GPUDevice *device, SDL_GPUTexture *texture, SDL_GPUSampler *sampler)
+Uint32 SDL_GetGPUBindlessIndex(SDL_GPUDevice *device, SDL_GPUCommandBuffer* command_buffer, SDL_GPUTexture *texture, SDL_GPUSampler *sampler)
 {
     CHECK_DEVICE_MAGIC(device, false);
 
-    return device->GetBindlessIndex(device->driverData, texture, sampler);
+    return device->GetBindlessIndex(device->driverData, command_buffer, texture, sampler);
 }
 
 void SDL_FreeGPUBindlessIndex(SDL_GPUDevice *device, Uint32 index)
