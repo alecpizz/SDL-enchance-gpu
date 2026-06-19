@@ -3359,6 +3359,30 @@ bool SDL_AcquireGPUSwapchainTexture(
     return result;
 }
 
+Uint32 SDL_GetGPUBindlessIndex(SDL_GPUDevice *device, SDL_GPUTexture *texture, SDL_GPUSampler *sampler)
+{
+    CHECK_DEVICE_MAGIC(device, false);
+
+    return device->GetBindlessIndex(device->driverData, texture, sampler);
+}
+
+void SDL_FreeGPUBindlessIndex(SDL_GPUDevice *device, Uint32 index)
+{
+    device->FreeBindlessIndex(device->driverData, index);
+}
+
+void SDL_UseGPUBindlessTextures(SDL_GPURenderPass *render_pass, SDL_GPUTexture *textures, Uint32 count)
+{
+    if (RENDERPASS_DEVICE->debug_mode) {
+        CHECK_RENDERPASS
+    }
+
+    RENDERPASS_DEVICE->UseBindlessTextures(
+        RENDERPASS_COMMAND_BUFFER,
+        textures,
+        count);
+}
+
 bool SDL_WaitForGPUSwapchain(
     SDL_GPUDevice *device,
     SDL_Window *window)

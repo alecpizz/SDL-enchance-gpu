@@ -4552,6 +4552,24 @@ static XrResult METAL_CreateXRSession(
     return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
 
+static Uint32 METAL_GetBindlessIndex(SDL_GPURenderer *driverData, SDL_GPUTexture *texture, SDL_GPUSampler *sampler)
+{
+    (void)driverData;
+    SDL_assert(false);
+    return 0;
+}
+
+static void METAL_FreeBindlessIndex(SDL_GPURenderer *driverData, Uint32 index)
+{
+    (void)driverData;
+    SDL_assert(false);
+}
+
+static void METAL_UseBindlessTextures(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *textures, Uint32 count)
+{
+    SDL_assert(false);
+}
+
 static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
 {
     @autoreleasepool {

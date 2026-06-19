@@ -9390,6 +9390,24 @@ static XrResult D3D12_CreateXRSession(
 #endif
 }
 
+static Uint32 D3D12_GetBindlessIndex(SDL_GPURenderer *driverData, SDL_GPUTexture *texture, SDL_GPUSampler *sampler)
+{
+    (void)driverData;
+    SDL_assert(false);
+    return 0;
+}
+
+static void D3D12_FreeBindlessIndex(SDL_GPURenderer *driverData, Uint32 index)
+{
+    (void)driverData;
+    SDL_assert(false);
+}
+
+static void D3D12_UseBindlessTextures(SDL_GPUCommandBuffer *commandBuffer, SDL_GPUTexture *textures, Uint32 count)
+{
+    SDL_assert(false);
+}
+
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
 {
     SDL_GPUDevice *result;

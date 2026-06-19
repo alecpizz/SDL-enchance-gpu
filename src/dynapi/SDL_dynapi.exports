@@ -1294,3 +1294,6 @@ _SDL_aligned_alloc_zero
 _SDL_wcstoul
 _SDL_wcstoll
 _SDL_wcstoull
+_SDL_GetGPUBindlessIndex
+_SDL_FreeGPUBindlessIndex
+_SDL_UseGPUBindlessTextures

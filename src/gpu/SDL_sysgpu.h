@@ -700,6 +700,20 @@ struct SDL_GPUDevice
         SDL_GPURenderer *driverData,
         const SDL_GPUTextureCreateInfo *createinfo);
 
+    Uint32 (*GetBindlessIndex)(
+        SDL_GPURenderer *driverData,
+        SDL_GPUTexture *texture,
+        SDL_GPUSampler *sampler);
+
+    void (*FreeBindlessIndex)(
+        SDL_GPURenderer *driverData,
+        Uint32 index);
+
+    void (*UseBindlessTextures)(
+        SDL_GPUCommandBuffer *commandBuffer,
+        SDL_GPUTexture *textures,
+        Uint32 count);
+
     SDL_GPUBuffer *(*CreateBuffer)(
         SDL_GPURenderer *driverData,
         SDL_GPUBufferUsageFlags usageFlags,
@@ -1145,6 +1159,9 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(CreateSampler, name)                 \
     ASSIGN_DRIVER_FUNC(CreateShader, name)                  \
     ASSIGN_DRIVER_FUNC(CreateTexture, name)                 \
+    ASSIGN_DRIVER_FUNC(GetBindlessIndex, name)              \
+    ASSIGN_DRIVER_FUNC(FreeBindlessIndex, name)             \
+    ASSIGN_DRIVER_FUNC(UseBindlessTextures, name)           \
     ASSIGN_DRIVER_FUNC(CreateBuffer, name)                  \
     ASSIGN_DRIVER_FUNC(CreateTransferBuffer, name)          \
     ASSIGN_DRIVER_FUNC(CreateXRSession, name)               \

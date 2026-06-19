@@ -4290,6 +4290,19 @@ extern SDL_DECLSPEC bool SDLCALL SDL_AcquireGPUSwapchainTexture(
     Uint32 *swapchain_texture_width,
     Uint32 *swapchain_texture_height);
 
+extern SDL_DECLSPEC Uint32 SDLCALL SDL_GetGPUBindlessIndex(
+    SDL_GPUDevice *device,
+    SDL_GPUTexture *texture,
+    SDL_GPUSampler *sampler);
+
+extern SDL_DECLSPEC void SDLCALL SDL_FreeGPUBindlessIndex(
+    SDL_GPUDevice *device,
+    Uint32 index);
+
+extern SDL_DECLSPEC void SDLCALL SDL_UseGPUBindlessTextures(
+    SDL_GPURenderPass *pass,
+    SDL_GPUTexture* textures,
+    Uint32 count);
 /**
  * Blocks the thread until all presenting command buffers are finished
  * executing.

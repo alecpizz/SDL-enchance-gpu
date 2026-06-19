@@ -90,6 +90,9 @@ SDL3_0.0.0 {
     SDL_CreateGPUSampler;
     SDL_CreateGPUShader;
     SDL_CreateGPUTexture;
+    SDL_GetBindlessIndex;
+    SDL_FreeGPUBindlessIndex;
+    SDL_UseGPUBindlessTextures;
     SDL_CreateGPUTransferBuffer;
     SDL_CreateHapticEffect;
     SDL_CreateMutex;
@@ -1276,7 +1279,7 @@ SDL3_0.0.0 {
     SDL_CreateGPUXRSession;
     SDL_GetGPUXRSwapchainFormats;
     SDL_CreateGPUXRSwapchain;
-    SDL_DestroyGPUXRSwapchain;
+    SDL_DestroyGPUXRSwapchain;w
     SDL_OpenXR_LoadLibrary;
     SDL_OpenXR_UnloadLibrary;
     SDL_OpenXR_GetXrGetInstanceProcAddr;
@@ -1296,6 +1299,9 @@ SDL3_0.0.0 {
     SDL_wcstoul;
     SDL_wcstoll;
     SDL_wcstoull;
+    SDL_GetGPUBindlessIndex;
+    SDL_FreeGPUBindlessIndex;
+    SDL_UseGPUBindlessTextures;
     # extra symbols go here (don't modify this line)
   local: *;
 };

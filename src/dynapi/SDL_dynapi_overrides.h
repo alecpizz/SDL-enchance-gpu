@@ -1322,3 +1322,6 @@
 #define SDL_wcstoul SDL_wcstoul_REAL
 #define SDL_wcstoll SDL_wcstoll_REAL
 #define SDL_wcstoull SDL_wcstoull_REAL
+#define SDL_GetGPUBindlessIndex SDL_GetGPUBindlessIndex_REAL
+#define SDL_FreeGPUBindlessIndex SDL_FreeGPUBindlessIndex_REAL
+#define SDL_UseGPUBindlessTextures SDL_UseGPUBindlessTextures_REAL

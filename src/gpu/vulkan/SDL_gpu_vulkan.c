@@ -77,6 +77,7 @@ typedef struct VulkanExtensions
 #define LARGE_ALLOCATION_INCREMENT    67108864 // 64  MiB
 #define MAX_UBO_SECTION_SIZE          4096     // 4   KiB
 #define DESCRIPTOR_POOL_SIZE          128
+#define MAX_BINDLESS_TEXTURES         1024
 #define WINDOW_PROPERTY_DATA          "SDL.internal.gpu.vulkan.data"
 
 #define IDENTITY_SWIZZLE               \
@@ -851,8 +852,9 @@ typedef struct VulkanGraphicsPipelineResourceLayout
      * 1: vertex uniform buffers
      * 2: fragment resources
      * 3: fragment uniform buffers
+     * 4: bindless textures
      */
-    DescriptorSetLayout *descriptorSetLayouts[4];
+    DescriptorSetLayout *descriptorSetLayouts[5];
 
     Uint32 vertexSamplerCount;
     Uint32 vertexStorageTextureCount;
@@ -899,8 +901,9 @@ typedef struct VulkanComputePipelineResourceLayout
      * 0: samplers, then read-only textures, then read-only buffers
      * 1: write-only textures, then write-only buffers
      * 2: uniform buffers
+     * 3: bindless textures
      */
-    DescriptorSetLayout *descriptorSetLayouts[3];
+    DescriptorSetLayout *descriptorSetLayouts[4];
 
     Uint32 numSamplers;
     Uint32 numReadonlyStorageTextures;
@@ -1032,6 +1035,8 @@ typedef struct VulkanCommandBuffer
     bool needNewComputeReadWriteDescriptorSet;
     bool needNewComputeUniformDescriptorSet;
     bool needNewComputeUniformOffsets;
+
+    bool needBindlessSetBind;
 
     VkDescriptorSet vertexResourceDescriptorSet;
     VkDescriptorSet vertexUniformDescriptorSet;
@@ -1272,6 +1277,15 @@ struct VulkanRenderer
     SDL_RWLock *defragLock;
 
     Uint8 defragInProgress;
+
+    // Bindless textures
+    bool bindlessSupported;
+    VkDescriptorPool bindlessDescriptorPool;
+    VkDescriptorSetLayout bindlessDescriptorSetLayout;
+    VkDescriptorSet bindlessDescriptorSet;
+    Uint32 *bindlessFreeIndices;
+    Uint32 bindlessFreeCount;
+    SDL_Mutex *bindlessLock;
 
     VulkanMemoryAllocation **allocationsToDefrag;
     Uint32 allocationsToDefragCount;
@@ -4048,7 +4062,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
     }
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-    VkDescriptorSetLayout descriptorSetLayouts[4];
+    VkDescriptorSetLayout descriptorSetLayouts[5];
     VkResult vulkanResult;
 
     pipelineResourceLayout = SDL_calloc(1, sizeof(VulkanGraphicsPipelineResourceLayout));
@@ -4093,10 +4107,13 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
         0,
         fragmentShader->numUniformBuffers);
 
+    pipelineResourceLayout->descriptorSetLayouts[4] = NULL;
+
     descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
     descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
     descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[2]->descriptorSetLayout;
     descriptorSetLayouts[3] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
+    descriptorSetLayouts[4] = renderer->bindlessDescriptorSetLayout;
 
     pipelineResourceLayout->vertexSamplerCount = vertexShader->numSamplers;
     pipelineResourceLayout->vertexStorageTextureCount = vertexShader->numStorageTextures;
@@ -4113,7 +4130,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = 4;
+    pipelineLayoutCreateInfo.setLayoutCount = renderer->bindlessSupported ? 5 : 4;
     pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayouts;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
@@ -4167,7 +4184,7 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
         return pipelineResourceLayout;
     }
 
-    VkDescriptorSetLayout descriptorSetLayouts[3];
+    VkDescriptorSetLayout descriptorSetLayouts[4];
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
     VkResult vulkanResult;
 
@@ -4203,9 +4220,12 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
         0,
         createinfo->num_uniform_buffers);
 
+    pipelineResourceLayout->descriptorSetLayouts[3] = NULL;
+
     descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
     descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
     descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[2]->descriptorSetLayout;
+    descriptorSetLayouts[3] = renderer->bindlessDescriptorSetLayout;
 
     pipelineResourceLayout->numSamplers = createinfo->num_samplers;
     pipelineResourceLayout->numReadonlyStorageTextures = createinfo->num_readonly_storage_textures;
@@ -4219,7 +4239,7 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = 3;
+    pipelineLayoutCreateInfo.setLayoutCount = renderer->bindlessSupported ? 4 : 3;
     pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayouts;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
@@ -5110,6 +5130,13 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->descriptorSetLayoutFetchLock);
     SDL_DestroyMutex(renderer->windowLock);
 
+    if (renderer->bindlessSupported) {
+        SDL_DestroyMutex(renderer->bindlessLock);
+        SDL_free(renderer->bindlessFreeIndices);
+        renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
+        renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
+    }
+
     renderer->vkDestroyDevice(renderer->logicalDevice, NULL);
     renderer->vkDestroyInstance(renderer->instance, NULL);
 
@@ -5488,18 +5515,22 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
         0,
         NULL);
 
-    VkDescriptorSet sets[4];
+    VkDescriptorSet sets[5];
     sets[0] = commandBuffer->vertexResourceDescriptorSet;
     sets[1] = commandBuffer->vertexUniformDescriptorSet;
     sets[2] = commandBuffer->fragmentResourceDescriptorSet;
     sets[3] = commandBuffer->fragmentUniformDescriptorSet;
+    Uint32 setCount = renderer->bindlessSupported ? 5 : 4;
+    if (renderer->bindlessSupported) {
+        sets[4] = renderer->bindlessDescriptorSet;
+    }
 
     renderer->vkCmdBindDescriptorSets(
         commandBuffer->commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         resourceLayout->pipelineLayout,
         0,
-        4,
+        setCount,
         sets,
         dynamicOffsetCount,
         dynamicOffsets);
@@ -5622,6 +5653,90 @@ static void VULKAN_DrawIndexedPrimitivesIndirect(
     }
 
     VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, vulkanBuffer);
+}
+
+static Uint32 VULKAN_GetBindlessIndex(
+    SDL_GPURenderer *driverData,
+    SDL_GPUTexture* texture,
+    SDL_GPUSampler* sampler)
+{
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+    VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)texture;
+    VulkanTexture *vulkanTexture = textureContainer->activeTexture;
+    VulkanSampler *vulkanSampler = (VulkanSampler *)sampler;
+
+    if (!renderer->bindlessSupported) {
+        SDL_SetError("Bindless textures are not supported on this device");
+        return SDL_MAX_UINT32;
+    }
+
+    SDL_LockMutex(renderer->bindlessLock);
+
+    if (renderer->bindlessFreeCount == 0) {
+        SDL_UnlockMutex(renderer->bindlessLock);
+        SDL_SetError("No bindless texture indices available");
+        return SDL_MAX_UINT32;
+    }
+
+    Uint32 index = renderer->bindlessFreeIndices[--renderer->bindlessFreeCount];
+
+    VkDescriptorImageInfo imageInfo;
+    imageInfo.sampler = vulkanSampler->sampler;
+    imageInfo.imageView = vulkanTexture->fullView;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet writeDescriptorSet;
+    writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDescriptorSet.pNext = NULL;
+    writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
+    writeDescriptorSet.dstBinding = 0;
+    writeDescriptorSet.dstArrayElement = index;
+    writeDescriptorSet.descriptorCount = 1;
+    writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writeDescriptorSet.pImageInfo = &imageInfo;
+    writeDescriptorSet.pBufferInfo = NULL;
+    writeDescriptorSet.pTexelBufferView = NULL;
+
+    renderer->vkUpdateDescriptorSets(
+        renderer->logicalDevice,
+        1,
+        &writeDescriptorSet,
+        0,
+        NULL);
+
+    SDL_UnlockMutex(renderer->bindlessLock);
+
+    return index;
+}
+
+static void VULKAN_FreeBindlessIndex(
+    SDL_GPURenderer *driverData,
+    Uint32 index)
+{
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+
+    if (!renderer->bindlessSupported || index >= MAX_BINDLESS_TEXTURES) {
+        return;
+    }
+
+    SDL_LockMutex(renderer->bindlessLock);
+
+    if (renderer->bindlessFreeCount < MAX_BINDLESS_TEXTURES) {
+        renderer->bindlessFreeIndices[renderer->bindlessFreeCount++] = index;
+    }
+
+    SDL_UnlockMutex(renderer->bindlessLock);
+}
+
+static void VULKAN_UseBindlessTextures(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUTexture *textures,
+    Uint32 count)
+{
+    (void)textures;
+    (void)count;
+    VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
+    vulkanCommandBuffer->needBindlessSetBind = true;
 }
 
 static void VULKAN_DrawIndexedPrimitivesIndirectCount(
@@ -8769,17 +8884,21 @@ static void VULKAN_INTERNAL_BindComputeDescriptorSets(
         0,
         NULL);
 
-    VkDescriptorSet sets[3];
+    VkDescriptorSet sets[4];
     sets[0] = commandBuffer->computeReadOnlyDescriptorSet;
     sets[1] = commandBuffer->computeReadWriteDescriptorSet;
     sets[2] = commandBuffer->computeUniformDescriptorSet;
+    Uint32 setCount = renderer->bindlessSupported ? 4 : 3;
+    if (renderer->bindlessSupported) {
+        sets[3] = renderer->bindlessDescriptorSet;
+    }
 
     renderer->vkCmdBindDescriptorSets(
         commandBuffer->commandBuffer,
         VK_PIPELINE_BIND_POINT_COMPUTE,
         resourceLayout->pipelineLayout,
         0,
-        3,
+        setCount,
         sets,
         dynamicOffsetCount,
         dynamicOffsets);
@@ -9784,6 +9903,8 @@ static SDL_GPUCommandBuffer *VULKAN_AcquireCommandBuffer(
     commandBuffer->needNewFragmentResourceDescriptorSet = true;
     commandBuffer->needNewFragmentUniformDescriptorSet = true;
     commandBuffer->needNewFragmentUniformOffsets = true;
+
+    commandBuffer->needBindlessSetBind = false;
 
     commandBuffer->needNewComputeReadOnlyDescriptorSet = true;
     commandBuffer->needNewComputeUniformDescriptorSet = true;
@@ -12703,6 +12824,22 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
     CreateDeviceExtensionArray(&renderer->supports, deviceExtensions);
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
 
+    // Enable descriptor indexing features for bindless textures if Vulkan 1.2 is supported
+    VkPhysicalDeviceProperties physProps;
+    renderer->vkGetPhysicalDeviceProperties(renderer->physicalDevice, &physProps);
+    int physMinor = VK_VERSION_MINOR(physProps.apiVersion);
+    if (physMinor >= 2) {
+        features->desiredVulkan11DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        features->desiredVulkan12DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        features->desiredVulkan13DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.runtimeDescriptorArray = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+        renderer->bindlessSupported = true;
+    }
+
     VkPhysicalDeviceFeatures2 featureList;
     int minor = VK_VERSION_MINOR(features->desiredApiVersion);
 
@@ -12715,15 +12852,15 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
         VkPhysicalDeviceVariablePointersFeatures varPointers;
     } legacyFeatures;
 
-    if (features->usesCustomVulkanOptions && minor > 0) {
+    if ((features->usesCustomVulkanOptions && minor > 0) || renderer->bindlessSupported) {
         featureList.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         featureList.features = features->desiredVulkan10DeviceFeatures;
-        if (minor > 1) {
+        if (renderer->bindlessSupported || minor > 1) {
             featureList.pNext = &features->desiredVulkan11DeviceFeatures;
             features->desiredVulkan11DeviceFeatures.pNext = &features->desiredVulkan12DeviceFeatures;
-            features->desiredVulkan12DeviceFeatures.pNext = minor > 2 ? &features->desiredVulkan13DeviceFeatures : NULL;
+            features->desiredVulkan12DeviceFeatures.pNext = (minor > 2) ? &features->desiredVulkan13DeviceFeatures : NULL;
             features->desiredVulkan13DeviceFeatures.pNext = NULL;
-        } else {
+        } else if (minor > 0) {
             // Break VkPhysicalDeviceVulkan11Features into pre 1.2 structures for Vulkan 1.1 Support
             SDL_zero(legacyFeatures);
 
@@ -13589,6 +13726,94 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         SDL_free(renderer);
         SDL_Vulkan_UnloadLibrary();
         return NULL;
+    }
+
+    if (renderer->bindlessSupported) {
+        VkDescriptorPoolSize poolSize;
+        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSize.descriptorCount = MAX_BINDLESS_TEXTURES;
+
+        VkDescriptorPoolCreateInfo poolInfo;
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.pNext = NULL;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+        poolInfo.maxSets = 1;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+
+        VkResult vkResult = renderer->vkCreateDescriptorPool(
+            renderer->logicalDevice,
+            &poolInfo,
+            NULL,
+            &renderer->bindlessDescriptorPool);
+        if (vkResult != VK_SUCCESS) {
+            renderer->bindlessSupported = false;
+        }
+
+        VkDescriptorSetLayoutBinding bindlessBinding;
+        bindlessBinding.binding = 0;
+        bindlessBinding.descriptorCount = MAX_BINDLESS_TEXTURES;
+        bindlessBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindlessBinding.stageFlags = VK_SHADER_STAGE_ALL;
+        bindlessBinding.pImmutableSamplers = NULL;
+
+        VkDescriptorBindingFlags bindlessFlags =
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+
+        VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo;
+        bindingFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+        bindingFlagsInfo.pNext = NULL;
+        bindingFlagsInfo.bindingCount = 1;
+        bindingFlagsInfo.pBindingFlags = &bindlessFlags;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo;
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.pNext = &bindingFlagsInfo;
+        layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &bindlessBinding;
+
+        vkResult = renderer->vkCreateDescriptorSetLayout(
+            renderer->logicalDevice,
+            &layoutInfo,
+            NULL,
+            &renderer->bindlessDescriptorSetLayout);
+        if (vkResult != VK_SUCCESS) {
+            renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
+            renderer->bindlessSupported = false;
+        }
+
+        VkDescriptorSetAllocateInfo allocInfo;
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.pNext = NULL;
+        allocInfo.descriptorPool = renderer->bindlessDescriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &renderer->bindlessDescriptorSetLayout;
+
+        vkResult = renderer->vkAllocateDescriptorSets(
+            renderer->logicalDevice,
+            &allocInfo,
+            &renderer->bindlessDescriptorSet);
+        if (vkResult != VK_SUCCESS) {
+            renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
+            renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
+            renderer->bindlessSupported = false;
+        }
+
+        renderer->bindlessFreeIndices = SDL_malloc(sizeof(Uint32) * MAX_BINDLESS_TEXTURES);
+        if (renderer->bindlessFreeIndices) {
+            for (Uint32 i = 0; i < MAX_BINDLESS_TEXTURES; i += 1) {
+                renderer->bindlessFreeIndices[i] = MAX_BINDLESS_TEXTURES - 1 - i;
+            }
+            renderer->bindlessFreeCount = MAX_BINDLESS_TEXTURES;
+            renderer->bindlessLock = SDL_CreateMutex();
+        } else {
+            renderer->vkFreeDescriptorSets(renderer->logicalDevice, renderer->bindlessDescriptorPool, 1, &renderer->bindlessDescriptorSet);
+            renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
+            renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
+            renderer->bindlessSupported = false;
+        }
     }
 
     // FIXME: just move this into this function
